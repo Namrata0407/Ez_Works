@@ -1,13 +1,13 @@
-from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, JWTManager
+from flask import Flask, jsonify, request,Response
 from werkzeug.utils import secure_filename
-from flask import Flask, jsonify, request
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from flask_cors import CORS
 from bson import ObjectId
 import bcrypt
 import os
-
+import io
 
 app = Flask(__name__)
 CORS(app)
@@ -25,7 +25,6 @@ client = MongoClient(mongo_uri)
 db = client['database']
 opt_usercollections = db['opt_users']
 pdf_fileCollections = db["pdf_fileCollections"]
-
 UPLOAD_FOLDER = 'uploadedFiles'
 ALLOWED_EXTENSIONS = {'pdf'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -34,6 +33,42 @@ from pathlib import Path
 
 def allowed_file(filename):
     return '.' in filename and filename.split('.')[-1].lower() in ALLOWED_EXTENSIONS
+
+
+
+# route for register a OPT user
+
+@app.route('/register', methods=['POST'])
+def add_user():
+    newdata = request.get_json()
+
+    password = newdata['password']
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=5))
+    newdata['password'] = hashed_password.decode('utf-8')
+
+    document = newdata
+
+    result = opt_usercollections.insert_one(document)
+
+    return jsonify({'id': str(result.inserted_id)})
+
+
+# route for login a user
+
+@app.route('/login', methods=['POST'])
+def login():
+    newdata = request.get_json()
+    username = newdata['email']
+    password = newdata['password']
+
+    user = opt_usercollections.find_one({'email': username})
+
+    if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
+        access_token = create_access_token(identity=str(user['_id']))
+        return jsonify({'access_token': access_token})
+
+    return jsonify({'message': 'Password and username are invalid'}), 401
+
 
 
 
@@ -64,38 +99,49 @@ def upload_file():
     return jsonify({'error': 'File type is invalid'})
 
 
-# route for register a OPT user
 
-@app.route('/register', methods=['POST'])
-def add_user():
-    data = request.get_json()
+# route for download a file
 
-    password = data['password']
-    hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=5))
-    data['password'] = hashed_password.decode('utf-8')
+@app.route('/download/<id>', methods=['GET'])
+def download_file(id):
+    try:
+        document = pdf_fileCollections.find_one({'_id': ObjectId(id)})
 
-    document = data
+        if document:
+            pdf_data = document["pdf_data"]
+            filename = document["filename"]
+            response = Response(io.BytesIO(pdf_data))
+            response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+        else:
+            return 'File not found', 404
 
-    result = opt_usercollections.insert_one(document)
+    except Exception as e:
+        print(str(e))
+        return 'Internal Server Error', 500
+    
 
-    return jsonify({'id': str(result.inserted_id)})
+
+# route for download all the files
+
+@app.route('/getall', methods=['GET'])
+def get_all():
+   
+    pdf_data = list(pdf_fileCollections.find())
+
+    all_files = []
+    for elements in pdf_data:
+        all_files.append({
+            'id': str(elements['_id']),
+            'filename': elements['filename'],
+        })
+
+    return jsonify(all_files)
 
 
-# route for login a user
-
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data['email']
-    password = data['password']
-
-    user = opt_usercollections.find_one({'email': username})
-
-    if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
-        access_token = create_access_token(identity=str(user['_id']))
-        return jsonify({'access_token': access_token})
-
-    return jsonify({'message': 'Password and username are invalid'}), 401
 
 if __name__ == '__main__':
     app.run()
+
+
+# ************************************************* Completed  *************************************************************
