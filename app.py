@@ -9,6 +9,7 @@ import bcrypt
 import os
 import io
 
+# main code
 app = Flask(__name__)
 CORS(app)
 app.config['SECRET_KEY'] = 'eZ-works'
